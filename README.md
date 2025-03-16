@@ -1,37 +1,32 @@
-# Pivot Level
+# cTrader Indicator: MultiPivotLevels
 
-Indikator ini akan menggambar level pivot menggunakan metode perhitungan yang bisa dipilih oleh pengguna. Metode perhitungan yang tersedia adalah sebagai berikut:
+Indikator `MultiPivotLevels` dirancang untuk digunakan dengan cTrader dan menyediakan berbagai metode untuk menghitung dan menampilkan level pivot pada grafik. Indikator ini mendukung beberapa metode perhitungan pivot dan dapat menampilkan level pivot saat ini dan sebelumnya dengan warna yang dapat disesuaikan.
 
-# Perhitungan Level Pivot untuk Berbagai Metode
+## Fitur
 
-#### H = High, L = Low, C = Close, O = Open (jika diperlukan), k = koefisien spesifik per metode
+- Mendukung beberapa metode perhitungan pivot: Classic, Fibonacci, Camarilla, Woodie, dan DeMark.
+- Dapat menampilkan level pivot untuk kerangka waktu yang ditentukan atau otomatis berdasarkan kerangka waktu grafik.
+- Menampilkan level pivot saat ini dan sebelumnya dengan warna yang dapat disesuaikan.
+- Opsi untuk menampilkan label harga pada level pivot.
 
-### Classic / Standard
-PP = (H + L + C) / 3 | R = (2 * PP) - L + k * (H - L) | S = (2 * PP) - H - k * (H - L)
-##### k = 0 untuk R1/S1, k = 1 untuk R2/S2
+## Parameter
 
-### Fibonacci
-PP = (H + L + C) / 3 | R = PP + k * (H - L) | S = PP - k * (H - L)
-##### k = 0.382 untuk R1/S1, k = 0.618 untuk R2/S2, k = 1.000 untuk R3/S3
+- **Use Auto Timeframe** (bool): Menentukan apakah akan secara otomatis memilih kerangka waktu pivot berdasarkan kerangka waktu grafik. Default adalah `true`.
+- **Pivot Timeframe** (TimeFrame): Menentukan kerangka waktu yang akan digunakan untuk perhitungan pivot ketika `Use Auto Timeframe` adalah `false`. Default adalah `Weekly`.
+- **Pivot Method** (PivotMethod): Metode yang digunakan untuk menghitung level pivot. Default adalah `Classic`. Metode yang tersedia adalah:
+  - `Classic`
+  - `Fibonacci`
+  - `Camarilla`
+  - `Woodie`
+  - `DeMark`
+- **Levels Color** (Color): Warna yang digunakan untuk menggambar level pivot saat ini. Default adalah `Gray`.
+- **Previous Levels Color** (Color): Warna yang digunakan untuk menggambar level pivot sebelumnya. Default adalah `DarkGray`.
+- **Show Previous Levels** (int): Jumlah level pivot sebelumnya yang akan ditampilkan. Nilai minimum adalah `0`. Default adalah `1`.
+- **Show Price Labels** (bool): Menentukan apakah akan menampilkan label harga untuk level pivot. Default adalah `true`.
 
-### Camarilla
-PP = (H + L + C) / 3 | R = C + (H - L) * k | S = C - (H - L) * k
-##### k = 1.1/12 untuk R1/S1, k = 1.1/6 untuk R2/S2, k = 1.1/4 untuk R3/S3, k = 1.1/2 untuk R4/S4
+## Cara Menggunakan
 
-### Woodie
-PP = (H + L + 2 * C) / 4 | R = (2 * PP) - L + k * (H - L) | S = (2 * PP) - H - k * (H - L)
-##### k = 0 untuk R1/S1, k = 1 untuk R2/S2
-
-### DeMark
-X = (C < O) ? (H + 2 * L + C) : (C > O) ? (2 * H + L + C) : (H + L + 2 * C) | PP = X / 4 | R = X / 2 - L | S = X / 2 - H
-##### Hanya 1 level R/S, tidak ada k
-
-### Catatan:
-- Classic: Sederhana dan umum digunakan
-- Fibonacci: Menggunakan rasio Fibonacci
-- Camarilla: Cocok untuk trading jangka pendek
-- Woodie: Fokus pada harga penutupan
-- DeMark: Prediktif, hanya 1 level R dan S
+Untuk menggunakan indikator `MultiPivotLevels`, tambahkan ke grafik di cTrader dan konfigurasikan parameter sesuai kebutuhan. Indikator akan secara otomatis menghitung dan menampilkan level pivot berdasarkan metode dan kerangka waktu yang dipilih.
 
 ![Image](https://github.com/user-attachments/assets/62115a36-d182-4e4d-ba28-fbe46cc9294e)
 
