@@ -104,4 +104,4 @@ MIT License - Bebas digunakan dan dimodifikasi.
 
 ## Support
 
-Issues dan suggestions: [GitHub Issues](https://github.com/yourusername/yourrepo/issues)
+Issues dan suggestions: [GitHub Issues](https://github.com/msyamsudin/cTrader-Indicator-Pivot-Level/issues)
