@@ -3,12 +3,14 @@ using cAlgo.API.Indicators;
 using cAlgo.API.Internals;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace cAlgo
 {
     [Indicator(IsOverlay = true, TimeZone = TimeZones.UTC, AccessRights = AccessRights.None)]
     public class MultiPivotLevels : Indicator
     {
+        #region Parameters
         [Parameter("Use Auto Timeframe", DefaultValue = true)]
         public bool UseAutoTimeframe { get; set; }
 
@@ -24,15 +26,37 @@ namespace cAlgo
         [Parameter("Previous Levels Color", DefaultValue = "DarkGray")]
         public Color PreviousLineColor { get; set; }
 
-        [Parameter("Show Previous Levels", DefaultValue = 1, MinValue = 0)]
+        [Parameter("Show Previous Levels", DefaultValue = 1, MinValue = 0, MaxValue = 10)]
         public int PreviousDays { get; set; }
 
         [Parameter("Show Price Labels", DefaultValue = true)]
         public bool ShowPriceLabels { get; set; }
 
+        [Parameter("Label Offset (bars)", DefaultValue = 5, MinValue = 0, MaxValue = 20)]
+        public int LabelOffset { get; set; }
+
+        [Parameter("Line Thickness", DefaultValue = 1, MinValue = 1, MaxValue = 5)]
+        public int LineThickness { get; set; }
+
+        [Parameter("Line Style", DefaultValue = LineStyle.Solid)]
+        public LineStyle LineStyleType { get; set; }
+
+        [Parameter("Show R3/S3", DefaultValue = true)]
+        public bool ShowExtremeLevels { get; set; }
+
+        [Parameter("Show Debug Info", DefaultValue = false)]
+        public bool ShowDebug { get; set; }
+
+        [Parameter("Extend Lines Right", DefaultValue = true)]
+        public bool ExtendRight { get; set; }
+        #endregion
+
+        #region Private Fields
         private Bars _pivotBars;
-        private DateTime _lastPivotTime = DateTime.MinValue; // Melacak waktu pivot terakhir
-        private bool _isInitialized = false; // Melacak apakah level sudah digambar pertama kali
+        private DateTime _lastPivotTime = DateTime.MinValue;
+        private bool _isInitialized = false;
+        private const string INDICATOR_PREFIX = "MPL_";
+        #endregion
 
         public enum PivotMethod
         {
@@ -45,29 +69,76 @@ namespace cAlgo
 
         protected override void Initialize()
         {
-            TimeFrame selectedTimeframe = UseAutoTimeframe ? GetPivotTimeFrame(Chart.TimeFrame) : PivotTimeframe;
-            _pivotBars = MarketData.GetBars(selectedTimeframe);
+            try
+            {
+                TimeFrame selectedTimeframe = UseAutoTimeframe ? GetPivotTimeFrame(Chart.TimeFrame) : PivotTimeframe;
+                _pivotBars = MarketData.GetBars(selectedTimeframe);
+                DebugPrint($"Initialized with timeframe: {selectedTimeframe}");
+            }
+            catch (Exception ex)
+            {
+                Print($"Error initializing MultiPivotLevels: {ex.Message}");
+            }
         }
 
         public override void Calculate(int index)
         {
-            if (!IsLastBar)
-                return;
-
-            var currentPivotTime = _pivotBars.OpenTimes[_pivotBars.Count - 2];
-
-            // Jika belum diinisialisasi atau ada pivot baru, gambar semua level
-            if (!_isInitialized || currentPivotTime != _lastPivotTime)
+            try
             {
-                Chart.RemoveAllObjects(); // Hapus semua objek hanya saat inisialisasi atau pivot baru
-                _lastPivotTime = currentPivotTime;
-                DrawAllLevels();
-                _isInitialized = true;
+                if (!IsLastBar)
+                    return;
+
+                if (_pivotBars == null || _pivotBars.Count < 2)
+                {
+                    DebugPrint("Insufficient pivot bars data");
+                    return;
+                }
+
+                var currentPivotTime = _pivotBars.OpenTimes[_pivotBars.Count - 2];
+
+                if (!_isInitialized || currentPivotTime != _lastPivotTime)
+                {
+                    DebugPrint($"New pivot detected at {currentPivotTime}");
+                    RemoveIndicatorObjects();
+                    _lastPivotTime = currentPivotTime;
+                    DrawAllLevels();
+                    _isInitialized = true;
+                }
+                else
+                {
+                    UpdateCurrentLevel();
+                }
             }
-            else
+            catch (Exception ex)
             {
-                // Hanya perbarui level terbaru tanpa menghapus yang lain
-                UpdateCurrentLevel();
+                Print($"Error in Calculate: {ex.Message}");
+            }
+        }
+
+        private void RemoveIndicatorObjects()
+        {
+            try
+            {
+                var objectsToRemove = new List<string>();
+                
+                foreach (var obj in Chart.Objects)
+                {
+                    if (obj.Name.StartsWith(INDICATOR_PREFIX))
+                    {
+                        objectsToRemove.Add(obj.Name);
+                    }
+                }
+                
+                foreach (var name in objectsToRemove)
+                {
+                    Chart.RemoveObject(name);
+                }
+                
+                DebugPrint($"Removed {objectsToRemove.Count} objects");
+            }
+            catch (Exception ex)
+            {
+                Print($"Error removing objects: {ex.Message}");
             }
         }
 
@@ -76,7 +147,8 @@ namespace cAlgo
             for (int dayOffset = 0; dayOffset <= PreviousDays; dayOffset++)
             {
                 var pivotBarIndex = _pivotBars.Count - 2 - dayOffset;
-                if (pivotBarIndex < 0)
+                
+                if (!IsValidBarIndex(pivotBarIndex))
                     continue;
 
                 var high = _pivotBars.HighPrices[pivotBarIndex];
@@ -84,10 +156,14 @@ namespace cAlgo
                 var close = _pivotBars.ClosePrices[pivotBarIndex];
                 var open = _pivotBars.OpenPrices[pivotBarIndex];
 
+                if (!IsValidPriceData(high, low, close, open))
+                {
+                    DebugPrint($"Invalid price data at index {pivotBarIndex}");
+                    continue;
+                }
+
                 DateTime startTime = _pivotBars.OpenTimes[pivotBarIndex];
-                DateTime endTime = dayOffset == 0 
-                    ? Bars.OpenTimes.LastValue 
-                    : startTime + GetTimeFrameDuration(_pivotBars.TimeFrame);
+                DateTime endTime = CalculateEndTime(dayOffset, pivotBarIndex);
 
                 double pivot, r1, r2, r3, s1, s2, s3;
                 CalculatePivotLevels(high, low, close, open, out pivot, out r1, out r2, out r3, out s1, out s2, out s3);
@@ -98,17 +174,23 @@ namespace cAlgo
                 DrawLevel($"Pivot{nameSuffix}", pivot, $"P{nameSuffix}", color, startTime, endTime, pivot);
                 DrawLevel($"R1{nameSuffix}", r1, $"R1{nameSuffix}", color, startTime, endTime, r1);
                 DrawLevel($"R2{nameSuffix}", r2, $"R2{nameSuffix}", color, startTime, endTime, r2);
-                DrawLevel($"R3{nameSuffix}", r3, $"R3{nameSuffix}", color, startTime, endTime, r3);
+                
+                if (ShowExtremeLevels)
+                {
+                    DrawLevel($"R3{nameSuffix}", r3, $"R3{nameSuffix}", color, startTime, endTime, r3);
+                    DrawLevel($"S3{nameSuffix}", s3, $"S3{nameSuffix}", color, startTime, endTime, s3);
+                }
+                
                 DrawLevel($"S1{nameSuffix}", s1, $"S1{nameSuffix}", color, startTime, endTime, s1);
                 DrawLevel($"S2{nameSuffix}", s2, $"S2{nameSuffix}", color, startTime, endTime, s2);
-                DrawLevel($"S3{nameSuffix}", s3, $"S3{nameSuffix}", color, startTime, endTime, s3);
             }
         }
 
         private void UpdateCurrentLevel()
         {
             var pivotBarIndex = _pivotBars.Count - 2;
-            if (pivotBarIndex < 0)
+            
+            if (!IsValidBarIndex(pivotBarIndex))
                 return;
 
             var high = _pivotBars.HighPrices[pivotBarIndex];
@@ -116,28 +198,62 @@ namespace cAlgo
             var close = _pivotBars.ClosePrices[pivotBarIndex];
             var open = _pivotBars.OpenPrices[pivotBarIndex];
 
+            if (!IsValidPriceData(high, low, close, open))
+                return;
+
             DateTime startTime = _pivotBars.OpenTimes[pivotBarIndex];
-            DateTime endTime = Bars.OpenTimes.LastValue; // Selalu perpanjang ke kanan untuk level terbaru
+            DateTime endTime = ExtendRight ? Bars.OpenTimes.LastValue : CalculateEndTime(0, pivotBarIndex);
 
             double pivot, r1, r2, r3, s1, s2, s3;
             CalculatePivotLevels(high, low, close, open, out pivot, out r1, out r2, out r3, out s1, out s2, out s3);
 
             var color = LineColor;
-            var nameSuffix = "";
 
-            // Perbarui level terbaru tanpa menghapus level sebelumnya
-            DrawLevel($"Pivot{nameSuffix}", pivot, $"P{nameSuffix}", color, startTime, endTime, pivot);
-            DrawLevel($"R1{nameSuffix}", r1, $"R1{nameSuffix}", color, startTime, endTime, r1);
-            DrawLevel($"R2{nameSuffix}", r2, $"R2{nameSuffix}", color, startTime, endTime, r2);
-            DrawLevel($"R3{nameSuffix}", r3, $"R3{nameSuffix}", color, startTime, endTime, r3);
-            DrawLevel($"S1{nameSuffix}", s1, $"S1{nameSuffix}", color, startTime, endTime, s1);
-            DrawLevel($"S2{nameSuffix}", s2, $"S2{nameSuffix}", color, startTime, endTime, s2);
-            DrawLevel($"S3{nameSuffix}", s3, $"S3{nameSuffix}", color, startTime, endTime, s3);
+            UpdateOrDrawLevel("Pivot", pivot, "P", color, startTime, endTime, pivot);
+            UpdateOrDrawLevel("R1", r1, "R1", color, startTime, endTime, r1);
+            UpdateOrDrawLevel("R2", r2, "R2", color, startTime, endTime, r2);
+            
+            if (ShowExtremeLevels)
+            {
+                UpdateOrDrawLevel("R3", r3, "R3", color, startTime, endTime, r3);
+                UpdateOrDrawLevel("S3", s3, "S3", color, startTime, endTime, s3);
+            }
+            
+            UpdateOrDrawLevel("S1", s1, "S1", color, startTime, endTime, s1);
+            UpdateOrDrawLevel("S2", s2, "S2", color, startTime, endTime, s2);
+        }
+
+        private void UpdateOrDrawLevel(string name, double price, string label, Color color, DateTime startTime, DateTime endTime, double priceValue)
+        {
+            string fullName = INDICATOR_PREFIX + name;
+            var trendLine = Chart.FindObject(fullName) as ChartTrendLine;
+            
+            if (trendLine != null)
+            {
+                trendLine.Time2 = endTime;
+                trendLine.Y2 = price;
+                trendLine.Y1 = price;
+                
+                var textObj = Chart.FindObject(fullName + "_label") as ChartText;
+                if (textObj != null && ShowPriceLabels)
+                {
+                    DateTime labelTime = CalculateLabelTime(endTime);
+                    textObj.Time = labelTime;
+                    textObj.Y = price;
+                    textObj.Text = $"{label} ({priceValue.ToString($"F{Symbol.Digits}")})";
+                }
+            }
+            else
+            {
+                DrawLevel(name, price, label, color, startTime, endTime, priceValue);
+            }
         }
 
         private void CalculatePivotLevels(double high, double low, double close, double open, 
             out double pivot, out double r1, out double r2, out double r3, out double s1, out double s2, out double s3)
         {
+            double range;
+            
             switch (Method)
             {
                 case PivotMethod.Classic:
@@ -152,7 +268,7 @@ namespace cAlgo
 
                 case PivotMethod.Fibonacci:
                     pivot = (high + low + close) / 3;
-                    var range = high - low;
+                    range = high - low;
                     r1 = pivot + (0.382 * range);
                     r2 = pivot + (0.618 * range);
                     r3 = pivot + (1.000 * range);
@@ -212,18 +328,14 @@ namespace cAlgo
 
         private TimeFrame GetPivotTimeFrame(TimeFrame chartTimeFrame)
         {
-            if (chartTimeFrame == TimeFrame.Hour4)
-                return TimeFrame.Weekly;
-            if (chartTimeFrame == TimeFrame.Minute)
+            if (chartTimeFrame == TimeFrame.Minute || chartTimeFrame == TimeFrame.Minute5)
                 return TimeFrame.Hour;
-            if (chartTimeFrame == TimeFrame.Minute5)
-                return TimeFrame.Hour;
-            if (chartTimeFrame == TimeFrame.Minute15)
-                return TimeFrame.Hour4;
-            if (chartTimeFrame == TimeFrame.Minute30)
+            if (chartTimeFrame == TimeFrame.Minute15 || chartTimeFrame == TimeFrame.Minute30)
                 return TimeFrame.Hour4;
             if (chartTimeFrame == TimeFrame.Hour)
                 return TimeFrame.Daily;
+            if (chartTimeFrame == TimeFrame.Hour4)
+                return TimeFrame.Weekly;
             if (chartTimeFrame == TimeFrame.Daily)
                 return TimeFrame.Weekly;
             if (chartTimeFrame == TimeFrame.Weekly)
@@ -232,6 +344,21 @@ namespace cAlgo
                 return TimeFrame.Monthly;
 
             return TimeFrame.Daily;
+        }
+
+        private DateTime CalculateEndTime(int dayOffset, int pivotBarIndex)
+        {
+            if (dayOffset == 0 && ExtendRight)
+                return Bars.OpenTimes.LastValue;
+                
+            DateTime startTime = _pivotBars.OpenTimes[pivotBarIndex];
+            
+            if (_pivotBars.TimeFrame == TimeFrame.Monthly)
+            {
+                return startTime.AddMonths(1);
+            }
+            
+            return startTime + GetTimeFrameDuration(_pivotBars.TimeFrame);
         }
 
         private TimeSpan GetTimeFrameDuration(TimeFrame timeFrame)
@@ -258,21 +385,44 @@ namespace cAlgo
             return TimeSpan.FromDays(1);
         }
 
+        private DateTime CalculateLabelTime(DateTime endTime)
+        {
+            if (endTime == Bars.OpenTimes.LastValue && LabelOffset > 0)
+            {
+                int labelIndex = Math.Max(0, Bars.Count - 1 - LabelOffset);
+                return Bars.OpenTimes[labelIndex];
+            }
+            return endTime;
+        }
+
         private void DrawLevel(string name, double price, string label, Color color, DateTime startTime, DateTime endTime, double priceValue)
         {
-            Chart.DrawTrendLine(name, startTime, price, endTime, price, color, 1, LineStyle.Solid);
+            string fullName = INDICATOR_PREFIX + name;
+            
+            Chart.DrawTrendLine(fullName, startTime, price, endTime, price, color, LineThickness, LineStyleType);
 
-            DateTime labelTime = endTime;
-            if (endTime == Bars.OpenTimes.LastValue)
+            if (ShowPriceLabels)
             {
-                int offsetBars = 5;
-                int labelIndex = Bars.Count - 1 - offsetBars;
-                if (labelIndex >= 0)
-                    labelTime = Bars.OpenTimes[labelIndex];
+                DateTime labelTime = CalculateLabelTime(endTime);
+                string displayLabel = $"{label} ({priceValue.ToString($"F{Symbol.Digits}")})";
+                Chart.DrawText(fullName + "_label", displayLabel, labelTime, price, color);
             }
+        }
 
-            string displayLabel = ShowPriceLabels ? $"{label} ({priceValue:F2})" : label;
-            Chart.DrawText(name + "_label", displayLabel, labelTime, price, color);
+        private bool IsValidBarIndex(int index)
+        {
+            return index >= 0 && index < _pivotBars.Count;
+        }
+
+        private bool IsValidPriceData(double high, double low, double close, double open)
+        {
+            return high > 0 && low > 0 && close > 0 && open > 0 && high >= low;
+        }
+
+        private void DebugPrint(string message)
+        {
+            if (ShowDebug)
+                Print($"[{DateTime.Now:HH:mm:ss}] MPL: {message}");
         }
     }
 }
